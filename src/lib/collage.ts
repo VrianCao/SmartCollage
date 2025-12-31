@@ -43,14 +43,12 @@ function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value));
 }
 
-function insetRect(rect: Rect, inset: number): Rect {
-  const insetClamped = Math.max(0, inset);
-  return {
-    x: rect.x + insetClamped,
-    y: rect.y + insetClamped,
-    width: Math.max(0, rect.width - insetClamped * 2),
-    height: Math.max(0, rect.height - insetClamped * 2),
-  };
+function distribute(total: number, parts: number): number[] {
+  const safeParts = Math.max(1, Math.floor(parts));
+  const safeTotal = Math.max(0, Math.floor(total));
+  const base = Math.floor(safeTotal / safeParts);
+  const rem = safeTotal - base * safeParts;
+  return Array.from({ length: safeParts }, (_, i) => base + (i < rem ? 1 : 0));
 }
 
 function computeRegions(size: number, mainRatio: number): {
@@ -58,9 +56,16 @@ function computeRegions(size: number, mainRatio: number): {
   regions: Region[];
 } {
   const safeRatio = clamp(mainRatio, 0.05, 0.95);
-  const mainSize = Math.round(size * safeRatio);
-  const ringThickness = (size - mainSize) / 2;
-  const ringT = Math.max(0, ringThickness);
+  let mainSize = Math.round(size * safeRatio);
+  mainSize = clamp(mainSize, 1, size);
+  // Keep ring thickness integer to avoid sub-pixel seams on canvas.
+  if ((size - mainSize) % 2 !== 0) {
+    const down = mainSize - 1;
+    const up = mainSize + 1;
+    if (down >= 1 && (size - down) % 2 === 0) mainSize = down;
+    else if (up <= size && (size - up) % 2 === 0) mainSize = up;
+  }
+  const ringT = Math.max(0, (size - mainSize) / 2);
 
   const mainRect: Rect = {
     x: ringT,
@@ -111,78 +116,131 @@ function allocateCounts(total: number, regions: Region[]): Record<RegionName, nu
   return out;
 }
 
-function computeGrid(count: number, width: number, height: number): { rows: number; cols: number } {
-  const n = Math.max(0, Math.floor(count));
-  if (n === 0) return { rows: 0, cols: 0 };
-  if (width <= 0 || height <= 0) return { rows: 1, cols: n };
+function computeBestRowsNoWaste(args: {
+  count: number;
+  width: number;
+  height: number;
+  gap: number;
+}): number | null {
+  const n = Math.max(0, Math.floor(args.count));
+  const width = Math.max(0, Math.floor(args.width));
+  const height = Math.max(0, Math.floor(args.height));
+  const gap = Math.max(0, Math.floor(args.gap));
+  if (n === 0 || width === 0 || height === 0) return 0;
 
-  let best = { rows: 1, cols: n, score: Number.POSITIVE_INFINITY };
+  let bestRows: number | null = null;
+  let bestScore = Number.POSITIVE_INFINITY;
 
-  for (let rows = 1; rows <= n; rows++) {
-    const cols = Math.ceil(n / rows);
-    const cellW = width / cols;
-    const cellH = height / rows;
-    const aspect = cellH === 0 ? 999 : cellW / cellH;
-    const squareness = Math.abs(Math.log(aspect));
-    const waste = rows * cols - n;
-    const score = squareness * 2 + waste / Math.max(1, n);
+  const maxRows = Math.min(n, height);
+  for (let rows = 1; rows <= maxRows; rows++) {
+    const availableHeight = height - gap * (rows - 1);
+    if (availableHeight < rows) break;
 
-    if (score < best.score) best = { rows, cols, score };
+    const base = Math.floor(n / rows);
+    if (base <= 0) break;
+    const extra = n - base * rows;
+
+    const rowHeight = availableHeight / rows;
+    let score = 0;
+    let ok = true;
+    for (let r = 0; r < rows; r++) {
+      const rowCount = base + (r < extra ? 1 : 0);
+      const availableWidth = width - gap * (rowCount - 1);
+      if (availableWidth < rowCount) {
+        ok = false;
+        break;
+      }
+      const cellW = availableWidth / rowCount;
+      const aspect = rowHeight === 0 ? 999 : cellW / rowHeight;
+      score += Math.abs(Math.log(aspect)) * rowCount;
+    }
+    if (!ok) continue;
+    if (score < bestScore) {
+      bestScore = score;
+      bestRows = rows;
+    }
   }
 
-  return { rows: best.rows, cols: best.cols };
+  return bestRows;
 }
 
-function buildCells(rect: Rect, count: number): Rect[] {
-  const n = Math.max(0, Math.floor(count));
-  if (n === 0 || rect.width <= 0 || rect.height <= 0) return [];
+function tryBuildCellsFilled(args: { rect: Rect; count: number; gap: number }): Rect[] | null {
+  const n = Math.max(0, Math.floor(args.count));
+  if (n === 0) return [];
 
-  const { rows, cols } = computeGrid(n, rect.width, rect.height);
-  if (rows === 0 || cols === 0) return [];
+  const gap = Math.max(0, Math.floor(args.gap));
+  const x0 = Math.round(args.rect.x);
+  const y0 = Math.round(args.rect.y);
+  const width = Math.round(args.rect.width);
+  const height = Math.round(args.rect.height);
+  if (width <= 0 || height <= 0) return null;
 
-  const cellW = rect.width / cols;
-  const cellH = rect.height / rows;
+  const rows = computeBestRowsNoWaste({ count: n, width, height, gap });
+  if (rows == null || rows <= 0) return null;
+
+  const base = Math.floor(n / rows);
+  const extra = n - base * rows;
+  if (base <= 0) return null;
+
+  const rowCounts = Array.from({ length: rows }, (_, r) => base + (r < extra ? 1 : 0));
+  const availableHeight = height - gap * (rows - 1);
+  if (availableHeight < rows) return null;
+  const rowHeights = distribute(availableHeight, rows);
 
   const cells: Rect[] = [];
-  for (let i = 0; i < n; i++) {
-    const row = Math.floor(i / cols);
-    const col = i % cols;
+  let y = y0;
+  for (let r = 0; r < rows; r++) {
+    const rowCount = rowCounts[r];
+    const availableWidth = width - gap * (rowCount - 1);
+    if (availableWidth < rowCount) return null;
+    const colWidths = distribute(availableWidth, rowCount);
 
-    const remaining = n - row * cols;
-    const itemsInThisRow = Math.min(cols, remaining);
-    const rowXOffset = itemsInThisRow === cols ? 0 : (rect.width - itemsInThisRow * cellW) / 2;
+    let x = x0;
+    for (let c = 0; c < rowCount; c++) {
+      cells.push({ x, y, width: colWidths[c], height: rowHeights[r] });
+      x += colWidths[c] + gap;
+      if (cells.length === n) break;
+    }
 
-    cells.push({
-      x: rect.x + rowXOffset + col * cellW,
-      y: rect.y + row * cellH,
-      width: cellW,
-      height: cellH,
-    });
+    y += rowHeights[r] + gap;
+    if (cells.length === n) break;
   }
-  return cells;
+
+  return cells.length === n ? cells : null;
+}
+
+function buildCellsFilled(rect: Rect, count: number, gap: number): Rect[] {
+  const n = Math.max(0, Math.floor(count));
+  if (n === 0) return [];
+
+  // Try the requested gap first; if impossible (region too small), fall back to a smaller gap.
+  let g = Math.max(0, Math.floor(gap));
+  for (let attempt = 0; attempt < 4; attempt++) {
+    const cells = tryBuildCellsFilled({ rect, count: n, gap: g });
+    if (cells) return cells;
+    g = Math.floor(g / 2);
+  }
+  return tryBuildCellsFilled({ rect, count: n, gap: 0 }) ?? [];
 }
 
 export function computeCollageLayout(options: CollageLayoutOptions): CollageLayout {
   const size = Math.max(64, Math.floor(options.size));
-  const gap = clamp(options.gap, 0, Math.floor(size / 10));
+  const gap = clamp(options.gap, 0, Math.floor(size / 8));
   const othersCount = Math.max(0, Math.floor(options.othersCount));
 
   const { mainRect, regions } = computeRegions(size, options.mainRatio);
   const counts = allocateCounts(othersCount, regions);
 
-  const gapInset = gap / 2;
   const ringCells: Rect[] = [];
   for (const region of regions) {
-    const regionCells = buildCells(region.rect, counts[region.name]).map((r) =>
-      insetRect(r, gapInset),
-    );
+    const regionCells = buildCellsFilled(region.rect, counts[region.name], gap);
     ringCells.push(...regionCells);
   }
 
   return {
     size,
     gap,
-    mainRect: insetRect(mainRect, gapInset),
+    mainRect,
     ringCells,
   };
 }
@@ -308,6 +366,7 @@ export async function renderCollageToCanvas(args: {
 
     const item = othersOrdered[idx];
     const dest = layout.ringCells[idx];
+    if (!dest) throw new Error("Layout did not allocate enough cells for ring images.");
     onProgress?.({
       phase: "decode",
       done: drawn,
@@ -371,4 +430,3 @@ export async function canvasToBlob(
     );
   });
 }
-

@@ -103,7 +103,7 @@ export default function Home() {
   const [mainId, setMainId] = useState<string | null>(null);
 
   const [mainRatio, setMainRatio] = useState(0.48);
-  const [gapPxAtExport, setGapPxAtExport] = useState(8);
+  const [gapPxAtExport, setGapPxAtExport] = useState(0);
   const [background, setBackground] = useState("#ffffff");
   const [shuffleOthers, setShuffleOthers] = useState(true);
 
