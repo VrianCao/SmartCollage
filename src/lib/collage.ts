@@ -29,6 +29,7 @@ export type RenderCollageOptions = {
   gap: number;
   background: string;
   shuffleOthers: boolean;
+  useMain: boolean;
 };
 
 export type CollageImageItem = {
@@ -340,23 +341,64 @@ export async function renderCollageToCanvas(args: {
   canvas.width = size;
   canvas.height = size;
 
+  onProgress?.({ phase: "layout", done: 0, total: 1, message: "计算布局…" });
+
+  ctx.save();
+  ctx.fillStyle = options.background;
+  ctx.fillRect(0, 0, size, size);
+  ctx.restore();
+
+  if (!options.useMain) {
+    const ordered = [...images];
+    if (options.shuffleOthers) shuffleInPlace(ordered);
+
+    const cells = buildCellsFilled({ x: 0, y: 0, width: size, height: size }, ordered.length, options.gap);
+    if (cells.length !== ordered.length) throw new Error("Layout did not allocate enough cells for images.");
+
+    const totalToDraw = ordered.length;
+    let drawn = 0;
+    for (let idx = 0; idx < ordered.length; idx++) {
+      if (signal?.aborted) throw new DOMException("Aborted", "AbortError");
+
+      const item = ordered[idx];
+      const dest = cells[idx];
+      onProgress?.({
+        phase: "decode",
+        done: drawn,
+        total: totalToDraw,
+        message: `解码图片 ${drawn + 1}/${totalToDraw}…`,
+      });
+      const decoded = await decodeImage(item.file);
+      try {
+        onProgress?.({
+          phase: "render",
+          done: drawn,
+          total: totalToDraw,
+          message: `绘制图片 ${drawn + 1}/${totalToDraw}…`,
+        });
+        drawImageCover(ctx, decoded.source, decoded.width, decoded.height, dest);
+      } finally {
+        decoded.close?.();
+      }
+      drawn += 1;
+      if (idx % 4 === 0) await nextFrame();
+    }
+
+    onProgress?.({ phase: "render", done: drawn, total: totalToDraw, message: "完成" });
+    return;
+  }
+
   const main = images.find((i) => i.id === mainId) ?? images[0];
   const others = images.filter((i) => i.id !== main.id);
   const othersOrdered = [...others];
   if (options.shuffleOthers) shuffleInPlace(othersOrdered);
 
-  onProgress?.({ phase: "layout", done: 0, total: 1, message: "计算布局…" });
   const layout = computeCollageLayout({
     size,
     mainRatio: options.mainRatio,
     gap: options.gap,
     othersCount: othersOrdered.length,
   });
-
-  ctx.save();
-  ctx.fillStyle = options.background;
-  ctx.fillRect(0, 0, size, size);
-  ctx.restore();
 
   const totalToDraw = othersOrdered.length + 1;
   let drawn = 0;

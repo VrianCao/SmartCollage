@@ -101,6 +101,7 @@ async function createDemoFiles(
 export default function Home() {
   const [images, setImages] = useState<UiImageItem[]>([]);
   const [mainId, setMainId] = useState<string | null>(null);
+  const [useMain, setUseMain] = useState(true);
 
   const [mainRatio, setMainRatio] = useState(0.48);
   const [gapPxAtExport, setGapPxAtExport] = useState(0);
@@ -213,6 +214,7 @@ export default function Home() {
           gap: scaledGap(previewSize),
           background,
           shuffleOthers,
+          useMain,
         },
         signal: controller.signal,
         onProgress: setProgress,
@@ -233,6 +235,7 @@ export default function Home() {
     previewSize,
     scaledGap,
     shuffleOthers,
+    useMain,
   ]);
 
   const exportHd = useCallback(async () => {
@@ -255,6 +258,7 @@ export default function Home() {
           gap: scaledGap(exportSize),
           background,
           shuffleOthers,
+          useMain,
         },
         signal: controller.signal,
         onProgress: setProgress,
@@ -288,6 +292,7 @@ export default function Home() {
     mainRatio,
     scaledGap,
     shuffleOthers,
+    useMain,
   ]);
 
   const generateDemo = useCallback(async () => {
@@ -393,7 +398,8 @@ export default function Home() {
               </span>
               {mainItem ? (
                 <span className="rounded-full bg-zinc-100 px-2 py-1 text-zinc-700 dark:bg-zinc-900 dark:text-zinc-200">
-                  主图：{mainItem.file.name}
+                  {useMain ? "主图：" : "首图："}
+                  {mainItem.file.name}
                 </span>
               ) : null}
             </div>
@@ -401,21 +407,36 @@ export default function Home() {
 
           <div className="mt-5 grid gap-4 sm:grid-cols-2">
             <div className="rounded-xl border border-zinc-200/70 bg-white/60 p-4 dark:border-zinc-800/70 dark:bg-zinc-950/30">
-              <div className="text-sm font-medium">主图占比</div>
-              <div className="mt-1 text-xs text-zinc-600 dark:text-zinc-400">
-                主图边长占画布边长：{Math.round(mainRatio * 100)}%（面积约 {mainAreaPercent}%）
+              <div className="text-sm font-medium">主图设置</div>
+              <div className="mt-3 grid gap-2">
+                <label className="flex items-center justify-between gap-3 text-xs text-zinc-600 dark:text-zinc-400">
+                  使用中心主图
+                  <input
+                    type="checkbox"
+                    checked={useMain}
+                    onChange={(e) => setUseMain(e.target.checked)}
+                    name="useMain"
+                    className="h-4 w-4 accent-zinc-900 dark:accent-zinc-100"
+                    disabled={busy}
+                  />
+                </label>
+                <div className="text-xs text-zinc-600 dark:text-zinc-400">
+                  {useMain
+                    ? `主图边长占画布边长：${Math.round(mainRatio * 100)}%（面积约 ${mainAreaPercent}%）`
+                    : "关闭后将使用全图网格拼图（无中心主图）。"}
+                </div>
+                <input
+                  type="range"
+                  min={0.25}
+                  max={0.8}
+                  step={0.01}
+                  name="mainRatio"
+                  value={mainRatio}
+                  onChange={(e) => setMainRatio(Number(e.target.value))}
+                  className="mt-1 w-full accent-zinc-900 dark:accent-zinc-100"
+                  disabled={busy || !useMain}
+                />
               </div>
-              <input
-                type="range"
-                min={0.25}
-                max={0.8}
-                step={0.01}
-                name="mainRatio"
-                value={mainRatio}
-                onChange={(e) => setMainRatio(Number(e.target.value))}
-                className="mt-3 w-full accent-zinc-900 dark:accent-zinc-100"
-                disabled={busy}
-              />
             </div>
 
             <div className="rounded-xl border border-zinc-200/70 bg-white/60 p-4 dark:border-zinc-800/70 dark:bg-zinc-950/30">
@@ -538,17 +559,19 @@ export default function Home() {
               >
                 导出高清
               </button>
-              <button
-                type="button"
-                className="rounded-xl border border-zinc-200 bg-white px-3 py-2 text-sm font-medium hover:bg-zinc-50 disabled:opacity-50 dark:border-zinc-800 dark:bg-zinc-950 dark:hover:bg-zinc-900"
-                onClick={() => {
-                  if (!mainItem) return;
-                  setMainId(mainItem.id);
-                }}
-                disabled={!canGenerate || busy}
-              >
-                重新确认主图
-              </button>
+              {useMain ? (
+                <button
+                  type="button"
+                  className="rounded-xl border border-zinc-200 bg-white px-3 py-2 text-sm font-medium hover:bg-zinc-50 disabled:opacity-50 dark:border-zinc-800 dark:bg-zinc-950 dark:hover:bg-zinc-900"
+                  onClick={() => {
+                    if (!mainItem) return;
+                    setMainId(mainItem.id);
+                  }}
+                  disabled={!canGenerate || busy}
+                >
+                  重新确认主图
+                </button>
+              ) : null}
             </div>
 
             {progress ? (
@@ -573,40 +596,48 @@ export default function Home() {
           </div>
 
           <div className="mt-6">
-            <div className="text-sm font-medium">选择主图（点击设置）</div>
-            <div className="mt-2 grid grid-cols-4 gap-2 sm:grid-cols-6 lg:grid-cols-8">
-              {images.slice(0, 240).map((item) => {
-                const selected = item.id === mainItem?.id;
-                return (
-                  <button
-                    key={item.id}
-                    type="button"
-                    className={`relative aspect-square overflow-hidden rounded-lg border ${selected ? "border-zinc-950 ring-2 ring-zinc-950 dark:border-zinc-100 dark:ring-zinc-100" : "border-zinc-200 dark:border-zinc-800"} bg-zinc-100 dark:bg-zinc-900`}
-                    onClick={() => setMainId(item.id)}
-                    disabled={busy}
-                    title={item.file.name}
-                  >
-                    {/* eslint-disable-next-line @next/next/no-img-element */}
-                    <img
-                      src={item.url}
-                      alt={item.file.name}
-                      className="h-full w-full object-cover"
-                      loading="lazy"
-                    />
-                    {selected ? (
-                      <div className="absolute left-1 top-1 rounded-full bg-zinc-950/90 px-2 py-0.5 text-[10px] font-medium text-white dark:bg-zinc-100/90 dark:text-zinc-950">
-                        主图
-                      </div>
-                    ) : null}
-                  </button>
-                );
-              })}
-            </div>
-            {images.length > 240 ? (
-              <div className="mt-2 text-xs text-zinc-600 dark:text-zinc-400">
-                为保证性能，仅展示前 240 张缩略图（已上传 {images.length} 张仍会全部参与生成）
+            {useMain ? (
+              <>
+                <div className="text-sm font-medium">选择主图（点击设置）</div>
+                <div className="mt-2 grid grid-cols-4 gap-2 sm:grid-cols-6 lg:grid-cols-8">
+                  {images.slice(0, 240).map((item) => {
+                    const selected = item.id === mainItem?.id;
+                    return (
+                      <button
+                        key={item.id}
+                        type="button"
+                        className={`relative aspect-square overflow-hidden rounded-lg border ${selected ? "border-zinc-950 ring-2 ring-zinc-950 dark:border-zinc-100 dark:ring-zinc-100" : "border-zinc-200 dark:border-zinc-800"} bg-zinc-100 dark:bg-zinc-900`}
+                        onClick={() => setMainId(item.id)}
+                        disabled={busy}
+                        title={item.file.name}
+                      >
+                        {/* eslint-disable-next-line @next/next/no-img-element */}
+                        <img
+                          src={item.url}
+                          alt={item.file.name}
+                          className="h-full w-full object-cover"
+                          loading="lazy"
+                        />
+                        {selected ? (
+                          <div className="absolute left-1 top-1 rounded-full bg-zinc-950/90 px-2 py-0.5 text-[10px] font-medium text-white dark:bg-zinc-100/90 dark:text-zinc-950">
+                            主图
+                          </div>
+                        ) : null}
+                      </button>
+                    );
+                  })}
+                </div>
+                {images.length > 240 ? (
+                  <div className="mt-2 text-xs text-zinc-600 dark:text-zinc-400">
+                    为保证性能，仅展示前 240 张缩略图（已上传 {images.length} 张仍会全部参与生成）
+                  </div>
+                ) : null}
+              </>
+            ) : (
+              <div className="text-xs text-zinc-600 dark:text-zinc-400">
+                已关闭中心主图：所有图片会按全图网格自动拼图。
               </div>
-            ) : null}
+            )}
           </div>
         </section>
 
